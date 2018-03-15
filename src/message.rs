@@ -87,3 +87,51 @@ pub fn process(message: &str) -> Result<u64, MessageError> {
     }
   }
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::io::Read;
+  use std::io::Write;
+
+  #[test]
+  fn clean_test_ok() {
+    let path1 = Path::new("/tmp/file_1.tmp");
+    let mut file1 = File::create(path1).unwrap();
+    file1.write_all(b"ABCDEF1234567890").unwrap();
+    assert!(path1.exists());
+
+    let path2 = Path::new("/tmp/file_2.tmp");
+    let mut file2 = File::create(path2).unwrap();
+    file2.write_all(b"ABCDEF1234567890").unwrap();
+    assert!(path2.exists());
+
+
+    let mut message_file = File::open("tests/message_test_ok.json").unwrap();
+    let mut msg = String::new();
+    message_file.read_to_string(&mut msg).unwrap();
+
+    let result = process(msg.as_str());
+
+    assert!(result.is_ok());
+    assert!(!path1.exists(), format!("{:?} still exists", path1));
+    assert!(!path2.exists(), format!("{:?} still exists", path2));
+  }
+
+  #[test]
+  fn clean_test_error() {
+    let path1 = Path::new("/tmp/file_3.tmp");
+    let mut file1 = File::create(path1).unwrap();
+    file1.write_all(b"ABCDEF1234567890").unwrap();
+    assert!(path1.exists());
+
+    let mut message_file = File::open("tests/message_test_error.json").unwrap();
+    let mut msg = String::new();
+    message_file.read_to_string(&mut msg).unwrap();
+
+    let result = process(msg.as_str());
+
+    assert!(match result { Err(MessageError::RuntimeError(_)) => true, _ => false });
+    assert!(!path1.exists(), format!("{:?} still exists", path1));
+  }
+}
