@@ -46,6 +46,27 @@ fn check_requirements(requirements: Requirements) -> Result<(), MessageError> {
   Ok(())
 }
 
+fn remove_files(files: Vec<String>, job_id: u64) -> Result<u64, MessageError> {
+  for file in files {
+    let path = Path::new(&file);
+
+    if path.is_file() {
+      match remove_file(path) {
+        Ok(_) => println!("Removed file: {:?}", path),
+        Err(error) => return Err(MessageError::RuntimeError(format!("Could not remove path {:?}: {}", path, error.description())))
+      }
+    } else if path.is_dir() {
+      match remove_dir_all(path) {
+        Ok(_) => println!("Removed directory: {:?}", path),
+        Err(error) => return Err(MessageError::RuntimeError(format!("Could not remove path {:?}: {}", path, error.description())))
+      }
+    } else {
+      return Err(MessageError::RuntimeError(format!("No such a file or directory: {:?}", path)));
+    }
+  }
+  Ok(job_id)
+}
+
 pub fn process(message: &str) -> Result<u64, MessageError> {
 
   let parsed: Result<Job, _> = serde_json::from_str(message);
@@ -61,29 +82,11 @@ pub fn process(message: &str) -> Result<u64, MessageError> {
         Err(msg) => { return Err(msg); }
       }
 
-      if parameters.action == "remove" {
-        let files = parameters.source.paths;
-        for file in files {
-          let path = Path::new(&file);
-
-          if path.is_file() {
-            match remove_file(path) {
-              Ok(_) => println!("Removed file: {:?}", path),
-              Err(error) => return Err(MessageError::RuntimeError(format!("Could not remove path {:?}: {}", path, error.description())))
-            }
-          } else if path.is_dir() {
-            match remove_dir_all(path) {
-              Ok(_) => println!("Removed directory: {:?}", path),
-              Err(error) => return Err(MessageError::RuntimeError(format!("Could not remove path {:?}: {}", path, error.description())))
-            }
-          } else {
-            return Err(MessageError::RuntimeError(format!("No such a file or directory: {:?}", path)));
-          }
-        }
-      } else {
-        return Err(MessageError::RuntimeError(format!("Unsupported action: {:?}", parameters.action)));
+      match parameters.action.as_str() {
+        "remove" => return remove_files(parameters.source.paths, content.job_id),
+        _ => return { Err(MessageError::RuntimeError(format!("Unsupported action: {:?}", parameters.action))) }
       }
-      Ok(content.job_id)
+
     },
     Err(msg) => {
       println!("ERROR {:?}", msg);
