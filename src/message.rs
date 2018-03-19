@@ -16,6 +16,7 @@ struct Requirements {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Parameters {
+  action: String,
   requirements: Requirements,
   source: Resource
 }
@@ -59,26 +60,28 @@ pub fn process(message: &str) -> Result<u64, MessageError> {
         Err(msg) => { return Err(msg); }
       }
 
-      // Clean files
-      let files = parameters.source.paths;
-      for file in files {
-        let path = Path::new(&file);
+      if parameters.action == "remove" {
+        let files = parameters.source.paths;
+        for file in files {
+          let path = Path::new(&file);
 
-        if path.is_file() {
-          match remove_file(path) {
-            Ok(_) => println!("Removed file: {:?}", path),
-            Err(error) => return Err(MessageError::RuntimeError(format!("Could not remove path {:?}: {}", path, error.description())))
+          if path.is_file() {
+            match remove_file(path) {
+              Ok(_) => println!("Removed file: {:?}", path),
+              Err(error) => return Err(MessageError::RuntimeError(format!("Could not remove path {:?}: {}", path, error.description())))
+            }
+          } else if path.is_dir() {
+            match remove_dir_all(path) {
+              Ok(_) => println!("Removed directory: {:?}", path),
+              Err(error) => return Err(MessageError::RuntimeError(format!("Could not remove path {:?}: {}", path, error.description())))
+            }
+          } else {
+            return Err(MessageError::RuntimeError(format!("No such a file or directory: {:?}", path)));
           }
-        } else if path.is_dir() {
-          match remove_dir_all(path) {
-            Ok(_) => println!("Removed directory: {:?}", path),
-            Err(error) => return Err(MessageError::RuntimeError(format!("Could not remove path {:?}: {}", path, error.description())))
-          }
-        } else {
-          return Err(MessageError::RuntimeError(format!("No such a file or directory: {:?}", path)));
         }
+      } else {
+        return Err(MessageError::RuntimeError(format!("Unsupported action: {:?}", parameters.action)));
       }
-
       Ok(content.job_id)
     },
     Err(msg) => {
@@ -95,7 +98,7 @@ mod tests {
   use std::io::Write;
 
   #[test]
-  fn clean_test_ok() {
+  fn remove_test_ok() {
     let path1 = Path::new("/tmp/file_1.tmp");
     let mut file1 = File::create(path1).unwrap();
     file1.write_all(b"ABCDEF1234567890").unwrap();
@@ -107,7 +110,7 @@ mod tests {
     assert!(path2.exists());
 
 
-    let mut message_file = File::open("tests/message_test_ok.json").unwrap();
+    let mut message_file = File::open("tests/message_test_remove_ok.json").unwrap();
     let mut msg = String::new();
     message_file.read_to_string(&mut msg).unwrap();
 
@@ -119,13 +122,13 @@ mod tests {
   }
 
   #[test]
-  fn clean_test_error() {
+  fn remove_test_error() {
     let path1 = Path::new("/tmp/file_3.tmp");
     let mut file1 = File::create(path1).unwrap();
     file1.write_all(b"ABCDEF1234567890").unwrap();
     assert!(path1.exists());
 
-    let mut message_file = File::open("tests/message_test_error.json").unwrap();
+    let mut message_file = File::open("tests/message_test_remove_error.json").unwrap();
     let mut msg = String::new();
     message_file.read_to_string(&mut msg).unwrap();
 
@@ -133,5 +136,16 @@ mod tests {
 
     assert!(match result { Err(MessageError::RuntimeError(_)) => true, _ => false });
     assert!(!path1.exists(), format!("{:?} still exists", path1));
+  }
+
+    #[test]
+  fn action_test_error() {
+    let mut msg = "{\"parameters\":{\"requirements\":{},\"source\":{\"paths\":[\"/tmp/file_x.tmp\"]}},\"job_id\": 0}";
+    let mut result = process(msg);
+    assert!(match result { Err(MessageError::RuntimeError(_)) => true, _ => false });
+
+    msg = "{\"parameters\":{\"action\": \"bad_action\",\"requirements\":{},\"source\":{\"paths\":[\"/tmp/file_x.tmp\"]}},\"job_id\": 0}";
+    result = process(msg);
+    assert!(match result { Err(MessageError::RuntimeError(_)) => true, _ => false });
   }
 }
