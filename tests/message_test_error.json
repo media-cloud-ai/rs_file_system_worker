@@ -1,0 +1,13 @@
+{
+  "parameters": {
+    "requirements": {
+    },
+    "source": {
+      "paths": [
+        "/tmp/file_3.tmp",
+        "/tmp/file_4.tmp"
+      ]
+    }
+  },
+  "job_id": 124
+}
