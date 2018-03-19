@@ -38,13 +38,13 @@ pub fn get_amqp_vhost() -> String {
 }
 
 pub fn get_amqp_queue() -> String {
-  get_env_value!("AMQP_QUEUE", "job_clean")
+  get_env_value!("AMQP_QUEUE", "job_file_system")
 }
 
 pub fn get_amqp_completed_queue() -> String {
-  get_env_value!("AMQP_COMPLETED_QUEUE", "job_clean_completed")
+  get_env_value!("AMQP_COMPLETED_QUEUE", "job_file_system_completed")
 }
 
 pub fn get_amqp_error_queue() -> String {
-  get_env_value!("AMQP_ERROR_QUEUE", "job_clean_error")
+  get_env_value!("AMQP_ERROR_QUEUE", "job_file_system_error")
 }
