@@ -1,5 +1,5 @@
 [package]
-name = "clean_worker"
+name = "file_system_worker"
 version = "0.1.0"
 authors = ["Valentin NOEL <valent.noel@gmail.com>"]
 

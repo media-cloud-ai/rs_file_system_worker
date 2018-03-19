@@ -1,2 +1,2 @@
-# rs_clean_worker
-Files removal worker
+# rs_file_system_worker
+File system worker
