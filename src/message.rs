@@ -9,7 +9,7 @@ struct Resource {
   paths: Vec<String>
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 struct Requirements {
   paths: Option<Vec<String>>
 }
@@ -17,6 +17,7 @@ struct Requirements {
 #[derive(Debug, Serialize, Deserialize)]
 struct Parameters {
   action: String,
+  #[serde(default)]
   requirements: Requirements,
   source: Resource
 }
@@ -138,7 +139,7 @@ mod tests {
     assert!(!path1.exists(), format!("{:?} still exists", path1));
   }
 
-    #[test]
+  #[test]
   fn action_test_error() {
     let mut msg = "{\"parameters\":{\"requirements\":{},\"source\":{\"paths\":[\"/tmp/file_x.tmp\"]}},\"job_id\": 0}";
     let mut result = process(msg);
