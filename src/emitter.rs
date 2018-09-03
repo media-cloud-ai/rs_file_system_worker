@@ -33,14 +33,14 @@ pub fn publish(channel_name: &str, msg: String) {
       client.create_channel()
     }).and_then(|channel| {
       let id = channel.id;
-      println!("created channel with id: {}", id);
+      debug!("created channel with id: {}", id);
 
       channel.queue_declare(
         channel_name,
         &QueueDeclareOptions::default(),
         &FieldTable::new()
       ).and_then(move |_| {
-        println!("Publish message on {:?}", channel_name);
+        debug!("Publish message on {:?}", channel_name);
 
         channel.basic_publish(
           "", // exchange
@@ -49,7 +49,7 @@ pub fn publish(channel_name: &str, msg: String) {
           &BasicPublishOptions::default(),
           BasicProperties::default()
         ).and_then(|result| {
-          println!("{:?}", result);
+          debug!("{:?}", result);
           Ok(())
         })
       })

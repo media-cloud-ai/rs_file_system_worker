@@ -1,6 +1,9 @@
 
+extern crate env_logger;
 extern crate futures;
 extern crate lapin_futures as lapin;
+#[macro_use]
+extern crate log;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -24,6 +27,11 @@ use lapin::client::ConnectionOptions;
 use lapin::channel::{BasicConsumeOptions, QueueDeclareOptions};
 
 fn main() {
+  let env = env_logger::Env::default()
+    .filter_or(env_logger::DEFAULT_FILTER_ENV, "info");
+ 
+  env_logger::Builder::from_env(env).init();
+
   loop {
     let amqp_hostname = get_amqp_hostname();
     let amqp_port = get_amqp_port();
@@ -34,12 +42,12 @@ fn main() {
     let amqp_completed_queue = get_amqp_completed_queue();
     let amqp_error_queue = get_amqp_error_queue();
 
-    println!("Start connection with configuration:");
-    println!("AMQP HOSTNAME: {}", amqp_hostname);
-    println!("AMQP PORT: {}", amqp_port);
-    println!("AMQP USERNAME: {}", amqp_username);
-    println!("AMQP VHOST: {}", amqp_vhost);
-    println!("AMQP QUEUE: {}", amqp_queue);
+    info!("Connecting...");
+    debug!("AMQP HOSTNAME: {}", amqp_hostname);
+    debug!("AMQP PORT: {}", amqp_port);
+    debug!("AMQP USERNAME: {}", amqp_username);
+    debug!("AMQP VHOST: {}", amqp_vhost);
+    debug!("AMQP QUEUE: {}", amqp_queue);
 
     // create the reactor
     let mut core = Core::new().unwrap();
@@ -49,7 +57,6 @@ fn main() {
     let channel_name = amqp_queue;
 
     let state = core.run(
-
       TcpStream::connect(&addr, &handle).and_then(|stream| {
         lapin::client::Client::connect(stream, &ConnectionOptions{
           username: amqp_username,
@@ -64,17 +71,17 @@ fn main() {
         client.create_channel()
       }).and_then(|channel| {
         let id = channel.id;
-        println!("created channel with id: {}", id);
+        debug!("created channel with id: {}", id);
 
         let ch = channel.clone();
         channel.queue_declare(&channel_name, &QueueDeclareOptions::default(), &FieldTable::new()).and_then(move |_| {
-          println!("channel {} declared queue {}", id, channel_name);
+          debug!("channel {} declared queue {}", id, channel_name);
 
           channel.basic_consume(&channel_name, "my_consumer", &BasicConsumeOptions::default(), &FieldTable::new())
         }).and_then(|stream| {
           stream.for_each(move |message| {
             let data = std::str::from_utf8(&message.data).unwrap();
-            println!("got message: {}", data);
+            trace!("got message: {}", data);
 
             match message::process(data) {
               Ok(job_id) => {
@@ -87,14 +94,19 @@ fn main() {
               }
               Err(error) => {
                 match error {
-                  message::MessageError::RequirementsError(msg) => {
-                    println!("{}", msg);
+                  message::MessageError::FormatError(msg) => {
+                    trace!("{:?}", msg);
                     ch.basic_reject(message.delivery_tag, true);
                   },
-                  message::MessageError::RuntimeError(msg) => {
+                  message::MessageError::RequirementsError(msg) => {
+                    trace!("{:?}", msg);
+                    ch.basic_reject(message.delivery_tag, true);
+                  },
+                  message::MessageError::RuntimeError(job_id, msg) => {
                     let content = json!({
                       "status": "error",
-                      "message": msg
+                      "message": msg,
+                      "job_id": job_id,
                     });
                     emitter::publish(&amqp_error_queue, content.to_string());
                     let requeue = false;
@@ -109,7 +121,7 @@ fn main() {
       })
     );
 
-    println!("{:?}", state);
+    debug!("{:?}", state);
     let sleep_duration = time::Duration::new(1, 0);
     thread::sleep(sleep_duration);
   }

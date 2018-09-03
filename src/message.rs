@@ -1,6 +1,6 @@
 
 use serde_json;
-use std::fs::*;
+use std::fs;
 use std::error::Error;
 use std::path::Path;
 
@@ -15,11 +15,30 @@ struct Requirements {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+enum Action {
+  #[serde(rename="copy")]
+  CopyFiles,
+  #[serde(rename="remove")]
+  Remove,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct JobParameters {
+  id: String,
+  #[serde(rename="type")]
+  param_type: String,
+  enable: bool,
+  default: String,
+  value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct Parameters {
-  action: String,
+  action: Action,
   #[serde(default)]
   requirements: Requirements,
-  source: Resource
+  source: Resource,
+  parameters: Vec<JobParameters>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,7 +48,8 @@ struct Job {
 }
 
 pub enum MessageError {
-  RuntimeError(String),
+  FormatError(String),
+  RuntimeError(u64, String),
   RequirementsError(String)
 }
 
@@ -46,34 +66,13 @@ fn check_requirements(requirements: Requirements) -> Result<(), MessageError> {
   Ok(())
 }
 
-fn remove_files(files: Vec<String>, job_id: u64) -> Result<u64, MessageError> {
-  for file in files {
-    let path = Path::new(&file);
-
-    if path.is_file() {
-      match remove_file(path) {
-        Ok(_) => println!("Removed file: {:?}", path),
-        Err(error) => return Err(MessageError::RuntimeError(format!("Could not remove path {:?}: {}", path, error.description())))
-      }
-    } else if path.is_dir() {
-      match remove_dir_all(path) {
-        Ok(_) => println!("Removed directory: {:?}", path),
-        Err(error) => return Err(MessageError::RuntimeError(format!("Could not remove path {:?}: {}", path, error.description())))
-      }
-    } else {
-      return Err(MessageError::RuntimeError(format!("No such a file or directory: {:?}", path)));
-    }
-  }
-  Ok(job_id)
-}
-
 pub fn process(message: &str) -> Result<u64, MessageError> {
 
   let parsed: Result<Job, _> = serde_json::from_str(message);
 
   match parsed {
     Ok(content) => {
-      println!("{:?}", content);
+      debug!("reveived message: {:?}", content);
 
       let parameters = content.parameters;
 
@@ -82,17 +81,63 @@ pub fn process(message: &str) -> Result<u64, MessageError> {
         Err(msg) => { return Err(msg); }
       }
 
-      match parameters.action.as_str() {
-        "remove" => return remove_files(parameters.source.paths, content.job_id),
-        _ => return { Err(MessageError::RuntimeError(format!("Unsupported action: {:?}", parameters.action))) }
+      match parameters.action {
+        Action::Remove => return remove_files(&parameters.source.paths, content.job_id),
+        Action::CopyFiles => return copy_files(&parameters.source.paths, &parameters.parameters, content.job_id),
       }
 
     },
     Err(msg) => {
-      println!("ERROR {:?}", msg);
-      return Err(MessageError::RuntimeError("bad input message".to_string()));
+      error!("{:?}", msg);
+      return Err(MessageError::FormatError("bad input message".to_string()));
     }
   }
+}
+
+fn remove_files(files: &Vec<String>, job_id: u64) -> Result<u64, MessageError> {
+  for file in files {
+    let path = Path::new(&file);
+
+    if path.is_file() {
+      match fs::remove_file(path) {
+        Ok(_) => debug!("Removed file: {:?}", path),
+        Err(error) => return Err(MessageError::RuntimeError(job_id, format!("Could not remove path {:?}: {}", path, error.description())))
+      }
+    } else if path.is_dir() {
+      match fs::remove_dir_all(path) {
+        Ok(_) => debug!("Removed directory: {:?}", path),
+        Err(error) => return Err(MessageError::RuntimeError(job_id, format!("Could not remove path {:?}: {}", path, error.description())))
+      }
+    } else {
+      return Err(MessageError::RuntimeError(job_id, format!("No such a file or directory: {:?}", path)));
+    }
+  }
+  Ok(job_id)
+}
+
+fn copy_files(files: &Vec<String>, parameters: &Vec<JobParameters>, job_id: u64) -> Result<u64, MessageError> {
+
+  let mut output_directory = None;
+  for parameter in parameters {
+    if parameter.id == "output_directory" {
+      output_directory = Some(parameter.value.clone());
+    }
+  }
+
+  if output_directory.is_none() {
+    return Err(MessageError::RuntimeError(job_id, "Could not copy files without output directory.".to_string()))
+  }
+
+  for file in files {
+    let od = output_directory.clone().unwrap();
+    let filename = Path::new(&file).file_name().unwrap();
+    let output_path = Path::new(&od).join(filename);
+    info!("Copy {} --> {:?}", file, output_path);
+    if let Err(message) = fs::copy(file, output_path) {
+      return Err(MessageError::RuntimeError(job_id, format!("{:?}", message)))
+    }
+  }
+  Ok(job_id)
 }
 
 #[cfg(test)]
@@ -138,7 +183,7 @@ mod tests {
 
     let result = process(msg.as_str());
 
-    assert!(match result { Err(MessageError::RuntimeError(_)) => true, _ => false });
+    assert!(match result { Err(MessageError::RuntimeError(0, _)) => true, _ => false });
     assert!(!path1.exists(), format!("{:?} still exists", path1));
   }
 
@@ -146,10 +191,10 @@ mod tests {
   fn action_test_error() {
     let mut msg = "{\"parameters\":{\"requirements\":{},\"source\":{\"paths\":[\"/tmp/file_x.tmp\"]}},\"job_id\": 0}";
     let mut result = process(msg);
-    assert!(match result { Err(MessageError::RuntimeError(_)) => true, _ => false });
+    assert!(match result { Err(MessageError::RuntimeError(0, _)) => true, _ => false });
 
     msg = "{\"parameters\":{\"action\": \"bad_action\",\"requirements\":{},\"source\":{\"paths\":[\"/tmp/file_x.tmp\"]}},\"job_id\": 0}";
     result = process(msg);
-    assert!(match result { Err(MessageError::RuntimeError(_)) => true, _ => false });
+    assert!(match result { Err(MessageError::RuntimeError(0, _)) => true, _ => false });
   }
 }
