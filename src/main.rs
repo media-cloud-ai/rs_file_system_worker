@@ -84,12 +84,8 @@ fn main() {
             trace!("got message: {}", data);
 
             match message::process(data) {
-              Ok(job_id) => {
-                let msg = json!({
-                  "job_id": job_id,
-                  "status": "completed"
-                });
-                emitter::publish(&amqp_completed_queue, msg.to_string());
+              Ok(job_response) => {
+                emitter::publish(&amqp_completed_queue, serde_json::to_string(&job_response).unwrap());
                 ch.basic_ack(message.delivery_tag);
               }
               Err(error) => {

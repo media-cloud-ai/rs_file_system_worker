@@ -47,6 +47,13 @@ struct Job {
   parameters: Parameters
 }
 
+#[derive(Debug, Serialize)]
+pub struct JobResponse {
+  pub job_id: u64,
+  pub status: String,
+  pub files: Vec<String>
+}
+
 pub enum MessageError {
   FormatError(String),
   RuntimeError(u64, String),
@@ -66,7 +73,7 @@ fn check_requirements(requirements: Requirements) -> Result<(), MessageError> {
   Ok(())
 }
 
-pub fn process(message: &str) -> Result<u64, MessageError> {
+pub fn process(message: &str) -> Result<JobResponse, MessageError> {
 
   let parsed: Result<Job, _> = serde_json::from_str(message);
 
@@ -94,7 +101,7 @@ pub fn process(message: &str) -> Result<u64, MessageError> {
   }
 }
 
-fn remove_files(files: &Vec<String>, job_id: u64) -> Result<u64, MessageError> {
+fn remove_files(files: &Vec<String>, job_id: u64) -> Result<JobResponse, MessageError> {
   for file in files {
     let path = Path::new(&file);
 
@@ -112,10 +119,15 @@ fn remove_files(files: &Vec<String>, job_id: u64) -> Result<u64, MessageError> {
       return Err(MessageError::RuntimeError(job_id, format!("No such a file or directory: {:?}", path)));
     }
   }
-  Ok(job_id)
+
+  Ok(JobResponse{
+    job_id,
+    status: "completed".to_string(),
+    files: vec![]
+  })
 }
 
-fn copy_files(files: &Vec<String>, parameters: &Vec<JobParameters>, job_id: u64) -> Result<u64, MessageError> {
+fn copy_files(files: &Vec<String>, parameters: &Vec<JobParameters>, job_id: u64) -> Result<JobResponse, MessageError> {
 
   let mut output_directory = None;
   for parameter in parameters {
@@ -128,16 +140,31 @@ fn copy_files(files: &Vec<String>, parameters: &Vec<JobParameters>, job_id: u64)
     return Err(MessageError::RuntimeError(job_id, "Could not copy files without output directory.".to_string()))
   }
 
+  let mut output_files = vec![];
+
   for file in files {
     let od = output_directory.clone().unwrap();
     let filename = Path::new(&file).file_name().unwrap();
     let output_path = Path::new(&od).join(filename);
     info!("Copy {} --> {:?}", file, output_path);
-    if let Err(message) = fs::copy(file, output_path) {
-      return Err(MessageError::RuntimeError(job_id, format!("{:?}", message)))
+
+    if let Some(parent) = output_path.parent() {
+      if let Err(message) = fs::create_dir_all(parent) {
+        return Err(MessageError::RuntimeError(job_id, format!("{:?}", message)));
+      }
     }
+
+    if let Err(message) = fs::copy(file, output_path.clone()) {
+      return Err(MessageError::RuntimeError(job_id, format!("{:?}", message)));
+    }
+    output_files.push(output_path.to_str().unwrap().to_string());
   }
-  Ok(job_id)
+
+  Ok(JobResponse{
+    job_id,
+    status: "completed".to_string(),
+    files: output_files
+  })
 }
 
 #[cfg(test)]
