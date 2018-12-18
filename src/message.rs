@@ -82,7 +82,7 @@ pub fn process(message: &str) -> Result<u64, MessageError> {
         "remove" => {
           remove_files(&content.parameters, content.job_id)
         },
-        "copy_files" => {
+        "copy" => {
           copy_files(&content.parameters, content.job_id)
         },
         action_label => {
