@@ -1,70 +1,10 @@
 
 use amqp_worker::MessageError;
+use amqp_worker::job::*;
 use serde_json;
 use std::fs;
 use std::error::Error;
 use std::path::Path;
-
-#[derive(Default, Debug, Serialize, Deserialize)]
-struct Requirement {
-  paths: Option<Vec<String>>
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-enum Parameter {
-  #[serde(rename = "string")]
-  StringParam{id: String, default: Option<String>, value: Option<String>},
-  #[serde(rename = "paths")]
-  PathsParam{id: String, default: Option<Vec<String>>, value: Option<Vec<String>>},
-  #[serde(rename = "requirements")]
-  RequirementParam{id: String, default: Option<Requirement>, value: Option<Requirement>},
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Job {
-  job_id: u64,
-  parameters: Vec<Parameter>
-}
-
-fn get_parameter(params: &Vec<Parameter>, key: &str) -> Option<String> {
-  for param in params.iter() {
-    match param {
-      Parameter::StringParam{id, default, value} => {
-        if id == key {
-          if let Some(ref v) = value {
-            return Some(v.clone())
-          } else {
-            return default.clone()
-          }
-        }
-      },
-      _ => {}
-    }
-  }
-  None
-}
-
-fn check_requirements(params: &Vec<Parameter>) -> Result<(), MessageError> {
-  for param in params.iter() {
-    match param {
-      Parameter::RequirementParam{id, value, ..} => {
-        if id == "requirements" {
-          if let Some(Requirement{paths: Some(paths)}) = value {
-            for ref path in paths.iter() {
-              let p = Path::new(path);
-              if !p.exists() {
-                return Err(MessageError::RequirementsError(format!("Warning: Required file does not exists: {:?}", p)));
-              }
-            }
-          }
-        }
-      },
-      _ => {}
-    }
-  }
-  Ok(())
-}
 
 pub fn process(message: &str) -> Result<u64, MessageError> {
   let parsed: Result<Job, _> = serde_json::from_str(message);
@@ -73,12 +13,12 @@ pub fn process(message: &str) -> Result<u64, MessageError> {
     Ok(content) => {
       debug!("reveived message: {:?}", content);
 
-      match check_requirements(&content.parameters) {
+      match content.check_requirements() {
         Ok(_) => {},
         Err(message) => { return Err(message); }
       }
 
-      match get_parameter(&content.parameters, "action").unwrap_or("Undefined".to_string()).as_str() {
+      match content.get_string_parameter("action").unwrap_or("Undefined".to_string()).as_str() {
         "remove" => {
           remove_files(&content.parameters, content.job_id)
         },
