@@ -1,118 +1,69 @@
 
 use amqp_worker::MessageError;
 use amqp_worker::job::*;
-use serde_json;
 use std::fs;
 use std::error::Error;
 use std::path::Path;
 
 pub fn process(message: &str) -> Result<u64, MessageError> {
-  let parsed: Result<Job, _> = serde_json::from_str(message);
+  let job = Job::new(message)?;
+  debug!("reveived message: {:?}", job);
 
-  match parsed {
-    Ok(content) => {
-      debug!("reveived message: {:?}", content);
+  match job.check_requirements() {
+    Ok(_) => {},
+    Err(message) => { return Err(message); }
+  }
 
-      match content.check_requirements() {
-        Ok(_) => {},
-        Err(message) => { return Err(message); }
-      }
-
-      match content.get_string_parameter("action").unwrap_or("Undefined".to_string()).as_str() {
-        "remove" => {
-          remove_files(&content.parameters, content.job_id)
-        },
-        "copy" => {
-          copy_files(&content.parameters, content.job_id)
-        },
-        action_label => {
-          Err(MessageError::ProcessingError(content.job_id, format!("Unknown action named {}", action_label)))
-        }
-      }
+  match job.get_string_parameter("action").unwrap_or("Undefined".to_string()).as_str() {
+    "remove" => {
+      remove_files(&job)
     },
-    Err(msg) => {
-      error!("{:?}", msg);
-      Err(MessageError::RuntimeError("bad input message".to_string()))
+    "copy" => {
+      copy_files(&job)
+    },
+    action_label => {
+      Err(MessageError::ProcessingError(job.job_id, format!("Unknown action named {}", action_label)))
     }
   }
 }
 
-fn remove_files(parameters: &Vec<Parameter>, job_id: u64) -> Result<u64, MessageError> {
-  let mut source_paths = None;
-  for parameter in parameters {
-    match parameter {
-      Parameter::PathsParam{id, default, value} => {
-        if id == "source_paths" {
-          if value.is_some() {
-            source_paths = value.clone();
-          } else {
-            source_paths = default.clone();
-          }
-        }
-      }
-      _ => {}
-    }
-  }
-
+fn remove_files(job: &Job) -> Result<u64, MessageError> {
+  let source_paths = job.get_paths_parameter("source_paths");
   if source_paths.is_none() {
-    return Err(MessageError::ProcessingError(job_id, "Could not remove empty source files.".to_string()))
+    return Err(MessageError::ProcessingError(job.job_id, "Could not remove empty source files.".to_string()))
   }
 
-  
   for source_path in &source_paths.unwrap() {
     let path = Path::new(&source_path);
 
     if path.is_file() {
       match fs::remove_file(path) {
         Ok(_) => debug!("Removed file: {:?}", path),
-        Err(error) => return Err(MessageError::ProcessingError(job_id, format!("Could not remove path {:?}: {}", path, error.description())))
+        Err(error) => return Err(MessageError::ProcessingError(job.job_id, format!("Could not remove path {:?}: {}", path, error.description())))
       }
     } else if path.is_dir() {
       match fs::remove_dir_all(path) {
         Ok(_) => debug!("Removed directory: {:?}", path),
-        Err(error) => return Err(MessageError::ProcessingError(job_id, format!("Could not remove path {:?}: {}", path, error.description())))
+        Err(error) => return Err(MessageError::ProcessingError(job.job_id, format!("Could not remove path {:?}: {}", path, error.description())))
       }
     } else {
-      return Err(MessageError::ProcessingError(job_id, format!("No such a file or directory: {:?}", path)));
+      return Err(MessageError::ProcessingError(job.job_id, format!("No such a file or directory: {:?}", path)));
     }
   }
 
-  Ok(job_id)
+  Ok(job.job_id)
 }
 
-fn copy_files(parameters: &Vec<Parameter>, job_id: u64) -> Result<u64, MessageError> {
-  let mut output_directory = None;
-  let mut source_paths = None;
-  for parameter in parameters {
-    match parameter {
-      Parameter::StringParam{id, default, value} => {
-        if id == "output_directory" {
-          if value.is_some() {
-            output_directory = value.clone();
-          } else {
-            output_directory = default.clone();
-          }
-        }
-      }
-      Parameter::PathsParam{id, default, value} => {
-        if id == "source_paths" {
-          if value.is_some() {
-            source_paths = value.clone();
-          } else {
-            source_paths = default.clone();
-          }
-        }
-      }
-      _ => {}
-    }
-  }
+fn copy_files(job: &Job) -> Result<u64, MessageError> {
+  let output_directory = job.get_string_parameter("output_directory");
+  let source_paths = job.get_paths_parameter("source_paths");
 
   if output_directory.is_none() {
-    return Err(MessageError::ProcessingError(job_id, "Could not copy files without output directory.".to_string()))
+    return Err(MessageError::ProcessingError(job.job_id, "Could not copy files without output directory.".to_string()))
   }
 
   if source_paths.is_none() {
-    return Err(MessageError::ProcessingError(job_id, "Could not copy files without input sources.".to_string()))
+    return Err(MessageError::ProcessingError(job.job_id, "Could not copy files without input sources.".to_string()))
   }
 
   let mut output_files = vec![];
@@ -125,17 +76,17 @@ fn copy_files(parameters: &Vec<Parameter>, job_id: u64) -> Result<u64, MessageEr
 
     if let Some(parent) = output_path.parent() {
       if let Err(message) = fs::create_dir_all(parent) {
-        return Err(MessageError::ProcessingError(job_id, format!("{:?}", message)));
+        return Err(MessageError::ProcessingError(job.job_id, format!("{:?}", message)));
       }
     }
 
     if let Err(message) = fs::copy(source_path, output_path.clone()) {
-      return Err(MessageError::ProcessingError(job_id, format!("{:?}", message)));
+      return Err(MessageError::ProcessingError(job.job_id, format!("{:?}", message)));
     }
     output_files.push(output_path.to_str().unwrap().to_string());
   }
 
-  Ok(job_id)
+  Ok(job.job_id)
 }
 
 #[cfg(test)]
