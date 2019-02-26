@@ -7,7 +7,7 @@ authors = [
 ]
 
 [dependencies]
-amqp_worker = "0.3.0"
+amqp_worker = "0.4.1"
 
 env_logger = "0.5.10"
 futures = "^0.1"
