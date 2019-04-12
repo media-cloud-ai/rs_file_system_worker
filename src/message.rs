@@ -28,7 +28,7 @@ pub fn process(message: &str) -> Result<u64, MessageError> {
 }
 
 fn remove_files(job: &Job) -> Result<u64, MessageError> {
-  let source_paths = job.get_paths_parameter("source_paths");
+  let source_paths = job.get_array_of_strings_parameter("source_paths");
   if source_paths.is_none() {
     return Err(MessageError::ProcessingError(job.job_id, "Could not remove empty source files.".to_string()))
   }
@@ -56,7 +56,7 @@ fn remove_files(job: &Job) -> Result<u64, MessageError> {
 
 fn copy_files(job: &Job) -> Result<u64, MessageError> {
   let output_directory = job.get_string_parameter("output_directory");
-  let source_paths = job.get_paths_parameter("source_paths");
+  let source_paths = job.get_array_of_strings_parameter("source_paths");
 
   if output_directory.is_none() {
     return Err(MessageError::ProcessingError(job.job_id, "Could not copy files without output directory.".to_string()))
@@ -119,7 +119,7 @@ mod tests {
         },
         {
           "id": "source_paths",
-          "type": "paths",
+          "type": "array_of_strings",
           "value": [
             "/tmp/file_1.tmp",
             "/tmp/file_2.tmp"
@@ -158,7 +158,7 @@ mod tests {
         },
         {
           "id": "source_paths",
-          "type": "paths",
+          "type": "array_of_strings",
           "value": [
             "/tmp/file_3.tmp",
             "/tmp/file_4.tmp"
@@ -190,7 +190,7 @@ mod tests {
         },
         {
           "id": "source_paths",
-          "type": "paths",
+          "type": "array_of_strings",
           "value": ["/tmp/file_x.tmp"]
         }
       ],
@@ -214,7 +214,7 @@ mod tests {
         },
         {
           "id": "source_paths",
-          "type": "paths",
+          "type": "array_of_strings",
           "value": ["/tmp/file_x.tmp"]
         }
       ],
