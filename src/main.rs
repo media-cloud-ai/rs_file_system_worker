@@ -1,12 +1,14 @@
 
 extern crate amqp_worker;
-extern crate env_logger;
 #[macro_use]
 extern crate log;
 extern crate serde;
 extern crate serde_json;
+extern crate simple_logger;
 
 use amqp_worker::*;
+use log::Level;
+use std::env;
 
 mod message;
 
@@ -23,10 +25,11 @@ impl MessageEvent for FileSystemEvent {
 static FILE_SYSTEM_EVENT: FileSystemEvent = FileSystemEvent{};
 
 fn main() {
-  let env = env_logger::Env::default()
-    .filter_or(env_logger::DEFAULT_FILTER_ENV, "info");
- 
-  env_logger::Builder::from_env(env).init();
+  if env::var("VERBOSE").is_ok() {
+    simple_logger::init_with_level(Level::Debug).unwrap();
+  } else {
+    simple_logger::init_with_level(Level::Warn).unwrap();
+  }
 
   start_worker(&FILE_SYSTEM_EVENT);
 }
