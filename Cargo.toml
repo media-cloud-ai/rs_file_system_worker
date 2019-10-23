@@ -7,9 +7,10 @@ authors = [
 ]
 
 [dependencies]
-amqp_worker = "0.5.7"
+amqp_worker = "0.6.0"
 futures = "^0.1"
 log = "^0.4"
+semver = "^0.9"
 serde = "^1.0"
 serde_json = "^1.0"
 simple_logger = "1.0.1"
