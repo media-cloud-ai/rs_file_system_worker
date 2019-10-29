@@ -11,10 +11,8 @@ use semver::Version;
 
 mod message;
 
-macro_rules! crate_version {
-    () => {
-        env!("CARGO_PKG_VERSION")
-    };
+pub mod built_info {
+  include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
 #[derive(Debug)]
@@ -36,11 +34,12 @@ impl MessageEvent for FileSystemEvent {
     }
 
     fn get_version(&self) -> Version {
-        semver::Version::parse(crate_version!()).expect("unable to locate Package version")
+      semver::Version::parse(built_info::PKG_VERSION).expect("unable to locate Package version")
     }
 
     fn get_git_version(&self) -> Version {
-        semver::Version::parse(crate_version!()).expect("unable to locate Package version")
+      semver::Version::parse(built_info::GIT_VERSION.unwrap_or_else(|| built_info::PKG_VERSION))
+        .expect("unable to locate Package version")
     }
 
     fn get_parameters(&self) -> Vec<Parameter> {
