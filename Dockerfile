@@ -3,9 +3,9 @@ FROM rust:1.41-stretch as builder
 ADD . /src
 WORKDIR /src
 
-RUN apt update && \
+RUN apt-get update && \
     cargo build --verbose --release && \
-    cargo install
+    cargo install --path .
 
 FROM debian:stretch
 COPY --from=builder /usr/local/cargo/bin/file_system_worker /usr/bin
