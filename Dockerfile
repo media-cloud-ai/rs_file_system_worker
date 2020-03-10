@@ -1,4 +1,4 @@
-FROM rust:1.36-stretch as builder
+FROM rust:1.41-stretch as builder
 
 ADD . /src
 WORKDIR /src
