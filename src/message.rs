@@ -1,8 +1,11 @@
-use amqp_worker::job::*;
-use amqp_worker::MessageError;
-use amqp_worker::ParametersContainer;
-use lapin_futures::Channel;
+
+use mcai_worker_sdk::{debug, info};
+use mcai_worker_sdk::job::*;
+use mcai_worker_sdk::Channel;
+use mcai_worker_sdk::MessageError;
+use mcai_worker_sdk::ParametersContainer;
 use std::fs;
+use std::io::{Error, ErrorKind};
 use std::path::Path;
 
 pub fn process(
@@ -10,90 +13,65 @@ pub fn process(
   job: &Job,
   job_result: JobResult,
 ) -> Result<JobResult, MessageError> {
-  match job
-    .get_string_parameter("action")
-    .unwrap_or_else(|| "Undefined".to_string())
-    .as_str()
-  {
-    "remove" => remove_files(&job, job_result),
-    "copy" => copy_files(&job, job_result),
-    action_label => {
-      let result = job_result
-        .with_status(JobStatus::Error)
-        .with_message(&format!("Unknown action named {}", action_label));
+  let result =
+    match job
+      .get_string_parameter("action")
+      .unwrap_or_else(|| "Undefined".to_string())
+      .as_str()
+    {
+      "remove" => {
+        remove_files(&job)
+      },
+      "copy" => {
+        copy_files(&job)
+      },
+      action_label => {
+        Err(Error::new(ErrorKind::Other, format!("Unknown action named {}", action_label)))
+      }
+    };
 
-      Err(MessageError::ProcessingError(result))
-    }
-  }
+  result
+    .map(|_| job_result.clone().with_status(JobStatus::Completed))
+    .map_err(|error| MessageError::from(error, job_result))
 }
 
-fn remove_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageError> {
+fn remove_files(job: &Job) -> Result<(), Error> {
   let source_paths = job.get_array_of_strings_parameter("source_paths");
   if source_paths.is_none() {
-    let result = job_result
-      .with_status(JobStatus::Error)
-      .with_message("Could not remove empty source files.");
-    return Err(MessageError::ProcessingError(result));
+    return Err(Error::new(ErrorKind::Other, "Could not remove empty source files."));
   }
 
   for source_path in &source_paths.unwrap() {
     let path = Path::new(&source_path);
 
     if path.is_file() {
-      match fs::remove_file(path) {
-        Ok(_) => debug!("Removed file: {:?}", path),
-        Err(error) => {
-          let result = job_result
-            .with_status(JobStatus::Error)
-            .with_message(&format!(
-              "Could not remove path {:?}: {}",
-              path,
-              error.to_string()
-            ));
-          return Err(MessageError::ProcessingError(result));
-        }
-      }
+      fs::remove_file(path).map_err(|err| {
+        Error::new(ErrorKind::Other, format!("Could not remove path {:?}: {}", path, err.to_string()))
+      })?;
+      debug!("Removed file: {:?}", path);
     } else if path.is_dir() {
-      match fs::remove_dir_all(path) {
-        Ok(_) => debug!("Removed directory: {:?}", path),
-        Err(error) => {
-          let result = job_result
-            .with_status(JobStatus::Error)
-            .with_message(&format!(
-              "Could not remove path {:?}: {}",
-              path,
-              error.to_string()
-            ));
-          return Err(MessageError::ProcessingError(result));
-        }
-      }
+      fs::remove_dir_all(path).map_err(|err|{      
+        Error::new(ErrorKind::Other, format!("Could not remove directory {:?}: {}", path, err.to_string()))
+      })?;
+      debug!("Removed directory: {:?}", path);
     } else {
-      let result = job_result
-        .with_status(JobStatus::Error)
-        .with_message(&format!("No such a file or directory: {:?}", path));
-      return Err(MessageError::ProcessingError(result));
+      return Err(Error::new(ErrorKind::Other, format!("No such a file or directory: {:?}", path)));
     }
   }
 
-  Ok(job_result.with_status(JobStatus::Completed))
+  Ok(())
 }
 
-fn copy_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageError> {
+fn copy_files(job: &Job) -> Result<(), Error> {
   let output_directory = job.get_string_parameter("output_directory");
   let source_paths = job.get_array_of_strings_parameter("source_paths");
 
   if output_directory.is_none() {
-    let result = job_result
-      .with_status(JobStatus::Error)
-      .with_message("Could not copy files without output directory.");
-    return Err(MessageError::ProcessingError(result));
+    return Err(Error::new(ErrorKind::Other, "Could not copy files without output directory."));
   }
 
   if source_paths.is_none() {
-    let result = job_result
-      .with_status(JobStatus::Error)
-      .with_message("Could not copy files without input sources.");
-    return Err(MessageError::ProcessingError(result));
+    return Err(Error::new(ErrorKind::Other, "Could not copy files without input sources."));
   }
 
   let mut output_files = vec![];
@@ -105,24 +83,18 @@ fn copy_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageErro
     info!("Copy {} --> {:?}", source_path, output_path);
 
     if let Some(parent) = output_path.parent() {
-      if let Err(message) = fs::create_dir_all(parent) {
-        let result = job_result
-          .with_status(JobStatus::Error)
-          .with_message(&message.to_string());
-        return Err(MessageError::ProcessingError(result));
-      }
+      fs::create_dir_all(parent).map_err(|error| {
+        Error::new(ErrorKind::Other, error.to_string())
+      })?;
     }
 
-    if let Err(message) = fs::copy(source_path, output_path.clone()) {
-      let result = job_result
-        .with_status(JobStatus::Error)
-        .with_message(&message.to_string());
-      return Err(MessageError::ProcessingError(result));
-    }
+    fs::copy(source_path, output_path.clone()).map_err(|error| {
+      Error::new(ErrorKind::Other, error.to_string())
+    })?;
     output_files.push(output_path.to_str().unwrap().to_string());
   }
 
-  Ok(job_result.with_status(JobStatus::Completed))
+  Ok(())
 }
 
 #[cfg(test)]
@@ -217,7 +189,7 @@ mod tests {
 
     let job_result = JobResult::new(124)
       .with_status(JobStatus::Error)
-      .with_message("No such a file or directory: \"/tmp/file_4.tmp\"");
+      .with_message("IO Error: No such a file or directory: \"/tmp/file_4.tmp\"");
 
     assert_eq!(result, Err(MessageError::ProcessingError(job_result)));
     assert!(!path1.exists(), format!("{:?} still exists", path1));
@@ -247,7 +219,7 @@ mod tests {
 
     let job_result = JobResult::new(0)
       .with_status(JobStatus::Error)
-      .with_message("Unknown action named Undefined");
+      .with_message("IO Error: Unknown action named Undefined");
 
     assert_eq!(result, Err(MessageError::ProcessingError(job_result)));
 
@@ -278,7 +250,7 @@ mod tests {
 
     let job_result = JobResult::new(0)
       .with_status(JobStatus::Error)
-      .with_message("Unknown action named bad_action");
+      .with_message("IO Error: Unknown action named bad_action");
 
     assert_eq!(result, Err(MessageError::ProcessingError(job_result)));
   }

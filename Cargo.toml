@@ -8,14 +8,7 @@ authors = [
 edition= "2018"
 
 [dependencies]
-amqp_worker = "0.9"
-futures = "^0.1"
-lapin-futures = "^0.28"
-log = "^0.4"
-semver = "^0.9"
-serde = "^1.0"
-serde_json = "^1.0"
-simple_logger = "1.0.1"
+mcai_worker_sdk = "0.10.1"
 
 [build-dependencies]
 built = "0.4"
