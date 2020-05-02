@@ -4,6 +4,7 @@ use amqp_worker::ParametersContainer;
 use lapin_futures::Channel;
 use std::fs;
 use std::path::Path;
+use regex::Regex;
 
 pub fn process(
   _channel: Option<&Channel>,
@@ -17,6 +18,7 @@ pub fn process(
   {
     "remove" => remove_files(&job, job_result),
     "copy" => copy_files(&job, job_result),
+    "list" => list_files(&job, job_result),
     action_label => {
       let result = job_result
         .with_status(JobStatus::Error)
@@ -123,6 +125,76 @@ fn copy_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageErro
   }
 
   Ok(job_result.with_status(JobStatus::Completed))
+}
+
+fn list_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageError> {
+    let directories = job.get_array_of_strings_parameter("directory_list");
+    let pattern = job.get_string_parameter("pattern");
+
+    info!("Listing {:?}", directories);
+
+    let re =
+        if let Some(pattern) = &pattern {
+            Some(Regex::new(&format!(r"{}", pattern)).map_err(|e|{custom_error_message(
+                    &format!("Regex not well formed {:?}: {}",pattern,e.to_string()),&job_result)
+                })?)
+        } else {
+            None
+        };
+
+    if let Some(pattern) = &pattern {
+        info!("Regex pattern is: {:?}.", pattern);
+    } else {
+        info!("No regex pattern given.");
+    }
+
+    let mut output_files = vec![];
+
+    for directory in &directories.unwrap() {
+        let dir = Path::new(&directory);
+        if dir.is_dir() {
+    		for entry in fs::read_dir(dir).map_err(|e|{custom_error_message(
+                    &format!("Cannot read in directory {:?}: {}",dir,e.to_string()),&job_result)
+                })? {
+    				let entry = entry.map_err(|e|{custom_error_message(
+                            &format!("Cannot list file: {}",e.to_string()),&job_result)
+                        })?;
+                    let entry_path = entry.path();
+                    let entry_as_str = entry_path.file_name().unwrap().to_str().unwrap();
+                    if re.as_ref()
+                            .map(|re| re.is_match(entry_as_str))
+                            .unwrap_or_else(|| false)
+                    {
+                        let file_name = entry
+        						.file_name()
+        						.into_string()
+        						.or_else(|f| Err(format!("Invalid entry: {:?}", f))).map_err(|e|{custom_error_message(
+                                        &format!("Error with file {:?}: {}",entry,e.to_string()),&job_result)
+                                    })?;
+        				info!("{}", file_name);
+                        output_files.push(Path::new(&dir).join(file_name));
+                    }
+                    else {
+                        debug!("{} does not fall into regex.", entry_as_str);
+                        continue;
+                    }
+
+    		}
+    	}
+        else {
+            error!("{} does not exist or is not a directory.",dir.display());
+        }
+    }
+
+    Ok(job_result.with_status(JobStatus::Completed))
+}
+
+fn custom_error_message(error_message: &str, job_result: &JobResult) -> MessageError {
+    let result = job_result
+                 .clone()
+                 .with_status(JobStatus::Error)
+                 .with_message(error_message);
+    MessageError::ProcessingError(result)
 }
 
 #[cfg(test)]
