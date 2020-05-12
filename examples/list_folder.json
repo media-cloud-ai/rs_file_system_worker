@@ -1,0 +1,15 @@
+{
+	"job_id": 1234,
+	"parameters": [
+		{
+			"id": "action",
+			"type": "string",
+			"value": "list"
+		},
+		{
+			"id": "source_paths",
+			"type": "array_of_strings",
+			"value": ["."]
+		}
+	]
+}

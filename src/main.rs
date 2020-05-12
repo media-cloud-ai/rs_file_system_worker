@@ -1,9 +1,7 @@
 use mcai_worker_sdk::worker::{Parameter, ParameterType};
 use mcai_worker_sdk::{
-  Channel,
-  Version,
   job::{Job, JobResult},
-  start_worker, MessageError, MessageEvent,
+  start_worker, McaiChannel, MessageError, MessageEvent, Version,
 };
 
 mod message;
@@ -45,7 +43,7 @@ impl MessageEvent for FileSystemEvent {
 
   fn process(
     &self,
-    channel: Option<&Channel>,
+    channel: Option<McaiChannel>,
     job: &Job,
     job_result: JobResult,
   ) -> Result<JobResult, MessageError> {
