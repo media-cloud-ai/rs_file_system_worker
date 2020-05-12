@@ -1,8 +1,11 @@
-use amqp_worker::job::*;
-use amqp_worker::MessageError;
-use amqp_worker::ParametersContainer;
-use lapin_futures::Channel;
+
+use mcai_worker_sdk::{debug, info};
+use mcai_worker_sdk::job::*;
+use mcai_worker_sdk::Channel;
+use mcai_worker_sdk::MessageError;
+use mcai_worker_sdk::ParametersContainer;
 use std::fs;
+use std::io::{Error, ErrorKind};
 use std::path::Path;
 use regex::Regex;
 
@@ -11,91 +14,70 @@ pub fn process(
   job: &Job,
   job_result: JobResult,
 ) -> Result<JobResult, MessageError> {
-  match job
-    .get_string_parameter("action")
-    .unwrap_or_else(|| "Undefined".to_string())
-    .as_str()
-  {
-    "remove" => remove_files(&job, job_result),
-    "copy" => copy_files(&job, job_result),
-    "list" => list_files(&job, job_result),
-    action_label => {
-      let result = job_result
-        .with_status(JobStatus::Error)
-        .with_message(&format!("Unknown action named {}", action_label));
 
-      Err(MessageError::ProcessingError(result))
-    }
-  }
+  let result =
+    match job
+      .get_string_parameter("action")
+      .unwrap_or_else(|| "Undefined".to_string())
+      .as_str()
+    {
+      "remove" => {
+        remove_files(&job)
+      },
+      "copy" => {
+        copy_files(&job)
+      },
+      "list" => {
+        list_files(&job)
+      },
+      action_label => {
+        Err(Error::new(ErrorKind::Other, format!("Unknown action named {}", action_label)))
+      }
+    };
+
+  result
+    .map(|mut destination_paths| job_result.clone().with_status(JobStatus::Completed)
+                               .with_destination_paths(&mut destination_paths))
+    .map_err(|error| MessageError::from(error, job_result))
 }
 
-fn remove_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageError> {
+fn remove_files(job: &Job) -> Result<Vec<String>, Error> {
   let source_paths = job.get_array_of_strings_parameter("source_paths");
   if source_paths.is_none() {
-    let result = job_result
-      .with_status(JobStatus::Error)
-      .with_message("Could not remove empty source files.");
-    return Err(MessageError::ProcessingError(result));
+    return Err(Error::new(ErrorKind::Other, "Could not remove empty source files."));
   }
 
   for source_path in &source_paths.unwrap() {
     let path = Path::new(&source_path);
 
     if path.is_file() {
-      match fs::remove_file(path) {
-        Ok(_) => debug!("Removed file: {:?}", path),
-        Err(error) => {
-          let result = job_result
-            .with_status(JobStatus::Error)
-            .with_message(&format!(
-              "Could not remove path {:?}: {}",
-              path,
-              error.to_string()
-            ));
-          return Err(MessageError::ProcessingError(result));
-        }
-      }
+      fs::remove_file(path).map_err(|err| {
+        Error::new(ErrorKind::Other, format!("Could not remove path {:?}: {}", path, err.to_string()))
+      })?;
+      debug!("Removed file: {:?}", path);
     } else if path.is_dir() {
-      match fs::remove_dir_all(path) {
-        Ok(_) => debug!("Removed directory: {:?}", path),
-        Err(error) => {
-          let result = job_result
-            .with_status(JobStatus::Error)
-            .with_message(&format!(
-              "Could not remove path {:?}: {}",
-              path,
-              error.to_string()
-            ));
-          return Err(MessageError::ProcessingError(result));
-        }
-      }
+      fs::remove_dir_all(path).map_err(|err|{
+        Error::new(ErrorKind::Other, format!("Could not remove directory {:?}: {}", path, err.to_string()))
+      })?;
+      debug!("Removed directory: {:?}", path);
     } else {
-      let result = job_result
-        .with_status(JobStatus::Error)
-        .with_message(&format!("No such a file or directory: {:?}", path));
-      return Err(MessageError::ProcessingError(result));
+      return Err(Error::new(ErrorKind::Other, format!("No such a file or directory: {:?}", path)));
     }
   }
 
-  Ok(job_result.with_status(JobStatus::Completed))
+  Ok(vec![])
 }
 
-fn copy_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageError> {
+fn copy_files(job: &Job) -> Result<Vec<String>, Error> {
   let output_directory = job.get_string_parameter("output_directory");
   let source_paths = job.get_array_of_strings_parameter("source_paths");
 
   if output_directory.is_none() {
-    let result = job_result
-      .with_status(JobStatus::Error)
-      .with_message("Could not copy files without output directory.");
-    return Err(MessageError::ProcessingError(result));
+    return Err(Error::new(ErrorKind::Other, "Could not copy files without output directory."));
   }
 
   if source_paths.is_none() {
-    let result = job_result
-      .with_status(JobStatus::Error)
-      .with_message("Could not copy files without input sources.");
-    return Err(MessageError::ProcessingError(result));
+    return Err(Error::new(ErrorKind::Other, "Could not copy files without input sources."));
   }
 
   let mut output_files = vec![];
@@ -107,37 +89,33 @@ fn copy_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageErro
     info!("Copy {} --> {:?}", source_path, output_path);
 
     if let Some(parent) = output_path.parent() {
-      if let Err(message) = fs::create_dir_all(parent) {
-        let result = job_result
-          .with_status(JobStatus::Error)
-          .with_message(&message.to_string());
-        return Err(MessageError::ProcessingError(result));
-      }
+      fs::create_dir_all(parent).map_err(|error| {
+        Error::new(ErrorKind::Other, error.to_string())
+      })?;
     }
 
-    if let Err(message) = fs::copy(source_path, output_path.clone()) {
-      let result = job_result
-        .with_status(JobStatus::Error)
-        .with_message(&message.to_string());
-      return Err(MessageError::ProcessingError(result));
-    }
+    fs::copy(source_path, output_path.clone()).map_err(|error| {
+      Error::new(ErrorKind::Other, error.to_string())
+    })?;
     output_files.push(output_path.to_str().unwrap().to_string());
   }
 
-  Ok(job_result.with_status(JobStatus::Completed))
+  Ok(vec![])
 }
 
-fn list_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageError> {
+fn list_files(job: &Job) -> Result<Vec<String>, Error> {
     let directories = job.get_array_of_strings_parameter("directory_list");
     let pattern = job.get_string_parameter("pattern");
+
+    let mut file_list = vec![];
 
     info!("Listing {:?}", directories);
 
     let re =
         if let Some(pattern) = &pattern {
-            Some(Regex::new(&format!(r"{}", pattern)).map_err(|e|{custom_error_message(
-                    &format!("Regex not well formed {:?}: {}",pattern,e.to_string()),&job_result)
-                })?)
+            Some(Regex::new(&format!(r"{}", pattern)).map_err(|error| {
+              Error::new(ErrorKind::Other, error.to_string())
+            })?)
         } else {
             None
         };
@@ -148,17 +126,15 @@ fn list_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageErro
         info!("No regex pattern given.");
     }
 
-    let mut output_files = vec![];
-
     for directory in &directories.unwrap() {
         let dir = Path::new(&directory);
         if dir.is_dir() {
-    		for entry in fs::read_dir(dir).map_err(|e|{custom_error_message(
-                    &format!("Cannot read in directory {:?}: {}",dir,e.to_string()),&job_result)
-                })? {
-    				let entry = entry.map_err(|e|{custom_error_message(
-                            &format!("Cannot list file: {}",e.to_string()),&job_result)
-                        })?;
+    		for entry in fs::read_dir(dir).map_err(|error| {
+              Error::new(ErrorKind::Other, error.to_string())
+            })? {
+    				let entry = entry.map_err(|error| {
+                      Error::new(ErrorKind::Other, error.to_string())
+                    })?;
                     let entry_path = entry.path();
                     let entry_as_str = entry_path.file_name().unwrap().to_str().unwrap();
                     if re.as_ref()
@@ -168,11 +144,12 @@ fn list_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageErro
                         let file_name = entry
         						.file_name()
         						.into_string()
-        						.or_else(|f| Err(format!("Invalid entry: {:?}", f))).map_err(|e|{custom_error_message(
-                                        &format!("Error with file {:?}: {}",entry,e.to_string()),&job_result)
-                                    })?;
+        						.or_else(|f| Err(format!("Invalid entry: {:?}", f))).map_err(|error| {
+                                  Error::new(ErrorKind::Other, error.to_string())
+                                })?;
         				info!("{}", file_name);
-                        output_files.push(Path::new(&dir).join(file_name));
+                        let path = Path::new(&dir).join(file_name);
+                        file_list.push(path.into_os_string().into_string().unwrap());
                     }
                     else {
                         debug!("{} does not fall into regex.", entry_as_str);
@@ -182,20 +159,13 @@ fn list_files(job: &Job, job_result: JobResult) -> Result<JobResult, MessageErro
     		}
     	}
         else {
-            error!("{} does not exist or is not a directory.",dir.display());
+            return Err(Error::new(ErrorKind::Other, format!("No such a directory: {:?}", dir)));
         }
     }
 
-    Ok(job_result.with_status(JobStatus::Completed))
+    Ok(file_list)
 }
 
-fn custom_error_message(error_message: &str, job_result: &JobResult) -> MessageError {
-    let result = job_result
-                 .clone()
-                 .with_status(JobStatus::Error)
-                 .with_message(error_message);
-    MessageError::ProcessingError(result)
-}
 
 #[cfg(test)]
 mod tests {
@@ -289,7 +259,7 @@ mod tests {
 
     let job_result = JobResult::new(124)
       .with_status(JobStatus::Error)
-      .with_message("No such a file or directory: \"/tmp/file_4.tmp\"");
+      .with_message("IO Error: No such a file or directory: \"/tmp/file_4.tmp\"");
 
     assert_eq!(result, Err(MessageError::ProcessingError(job_result)));
     assert!(!path1.exists(), format!("{:?} still exists", path1));
@@ -319,7 +289,7 @@ mod tests {
 
     let job_result = JobResult::new(0)
       .with_status(JobStatus::Error)
-      .with_message("Unknown action named Undefined");
+      .with_message("IO Error: Unknown action named Undefined");
 
     assert_eq!(result, Err(MessageError::ProcessingError(job_result)));
 
@@ -350,7 +320,7 @@ mod tests {
 
     let job_result = JobResult::new(0)
       .with_status(JobStatus::Error)
-      .with_message("Unknown action named bad_action");
+      .with_message("IO Error: Unknown action named bad_action");
 
     assert_eq!(result, Err(MessageError::ProcessingError(job_result)));
   }
