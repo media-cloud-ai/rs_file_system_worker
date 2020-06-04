@@ -8,7 +8,7 @@ authors = [
 edition= "2018"
 
 [dependencies]
-mcai_worker_sdk = "0.10.3"
+mcai_worker_sdk = "0.10.4"
 
 [build-dependencies]
 built = "0.4"
