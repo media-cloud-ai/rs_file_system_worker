@@ -1,19 +1,30 @@
-use mcai_worker_sdk::worker::{Parameter, ParameterType};
-use mcai_worker_sdk::{
-  job::{Job, JobResult},
-  start_worker, McaiChannel, MessageError, MessageEvent, Version,
-};
+#[macro_use]
+extern crate serde_derive;
 
+use crate::action::FileSystemAction;
+use mcai_worker_sdk::{
+  job::JobResult, start_worker, McaiChannel, MessageError, MessageEvent, Version,
+};
+use schemars::JsonSchema;
+
+mod action;
 mod message;
 
 pub mod built_info {
   include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct FileSystemEvent {}
 
-impl MessageEvent for FileSystemEvent {
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+pub struct FileSystemParameters {
+  source_paths: Vec<String>,
+  action: FileSystemAction,
+  output_directory: Option<String>,
+}
+
+impl MessageEvent<FileSystemParameters> for FileSystemEvent {
   fn get_name(&self) -> String {
     "File System".to_string()
   }
@@ -32,27 +43,17 @@ impl MessageEvent for FileSystemEvent {
     Version::parse(built_info::PKG_VERSION).expect("unable to locate Package version")
   }
 
-  fn get_parameters(&self) -> Vec<Parameter> {
-    vec![Parameter {
-      identifier: "action".to_string(),
-      label: "Action".to_string(),
-      kind: vec![ParameterType::String],
-      required: true,
-    }]
-  }
-
   fn process(
     &self,
     channel: Option<McaiChannel>,
-    job: &Job,
+    parameters: FileSystemParameters,
     job_result: JobResult,
   ) -> Result<JobResult, MessageError> {
-    message::process(channel, job, job_result)
+    message::process(channel, parameters, job_result)
   }
 }
 
-static FILE_SYSTEM_EVENT: FileSystemEvent = FileSystemEvent {};
-
 fn main() {
-  start_worker(&FILE_SYSTEM_EVENT);
+  let message_event = FileSystemEvent::default();
+  start_worker(message_event);
 }

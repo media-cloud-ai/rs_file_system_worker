@@ -1,25 +1,34 @@
-use mcai_worker_sdk::{debug, info, job::*, warn, McaiChannel, MessageError, ParametersContainer};
-use std::fs;
+use mcai_worker_sdk::{
+  job::{JobResult, JobStatus},
+  McaiChannel, MessageError,
+};
+
+use crate::action::copy::CopyAction;
+use crate::action::list::ListAction;
+use crate::action::remove::RemoveAction;
+use crate::action::Action;
+use crate::{FileSystemAction, FileSystemParameters};
 use std::io::{Error, ErrorKind};
-use std::path::Path;
 
 pub fn process(
   _channel: Option<McaiChannel>,
-  job: &Job,
+  parameters: FileSystemParameters,
   job_result: JobResult,
 ) -> Result<JobResult, MessageError> {
-  let result = match job
-    .get_string_parameter("action")
-    .unwrap_or_else(|| "Undefined".to_string())
-    .as_str()
-  {
-    "remove" => remove_files(&job),
-    "copy" => copy_files(&job),
-    "list" => list(&job),
-    action_label => Err(Error::new(
-      ErrorKind::Other,
-      format!("Unknown action named {}", action_label),
-    )),
+  let source_paths = parameters.source_paths;
+  let result = match parameters.action {
+    FileSystemAction::Copy => {
+      if let Some(output_directory) = parameters.output_directory {
+        CopyAction::new(source_paths, output_directory).execute()
+      } else {
+        Err(Error::new(
+          ErrorKind::Other,
+          "Could not copy files without output directory.",
+        ))
+      }
+    }
+    FileSystemAction::List => ListAction::new(source_paths).execute(),
+    FileSystemAction::Remove => RemoveAction::new(source_paths).execute(),
   };
 
   result
@@ -35,125 +44,14 @@ pub fn process(
     .map_err(|error| MessageError::from(error, job_result))
 }
 
-fn remove_files(job: &Job) -> Result<Option<Vec<String>>, Error> {
-  let source_paths = job.get_array_of_strings_parameter("source_paths");
-  if source_paths.is_none() {
-    return Err(Error::new(
-      ErrorKind::Other,
-      "Could not remove empty source files.",
-    ));
-  }
-
-  for source_path in &source_paths.unwrap() {
-    let path = Path::new(&source_path);
-
-    if path.is_file() {
-      fs::remove_file(path).map_err(|err| {
-        Error::new(
-          ErrorKind::Other,
-          format!("Could not remove path {:?}: {}", path, err.to_string()),
-        )
-      })?;
-      debug!("Removed file: {:?}", path);
-    } else if path.is_dir() {
-      fs::remove_dir_all(path).map_err(|err| {
-        Error::new(
-          ErrorKind::Other,
-          format!("Could not remove directory {:?}: {}", path, err.to_string()),
-        )
-      })?;
-      debug!("Removed directory: {:?}", path);
-    } else {
-      return Err(Error::new(
-        ErrorKind::Other,
-        format!("No such a file or directory: {:?}", path),
-      ));
-    }
-  }
-
-  Ok(None)
-}
-
-fn copy_files(job: &Job) -> Result<Option<Vec<String>>, Error> {
-  let output_directory = job.get_string_parameter("output_directory");
-  let source_paths = job.get_array_of_strings_parameter("source_paths");
-
-  if output_directory.is_none() {
-    return Err(Error::new(
-      ErrorKind::Other,
-      "Could not copy files without output directory.",
-    ));
-  }
-
-  if source_paths.is_none() {
-    return Err(Error::new(
-      ErrorKind::Other,
-      "Could not copy files without input sources.",
-    ));
-  }
-
-  let mut output_files = vec![];
-
-  for source_path in &source_paths.unwrap() {
-    let od = output_directory.clone().unwrap();
-    let filename = Path::new(&source_path).file_name().unwrap();
-    let output_path = Path::new(&od).join(filename);
-    info!("Copy {} --> {:?}", source_path, output_path);
-
-    if let Some(parent) = output_path.parent() {
-      fs::create_dir_all(parent)
-        .map_err(|error| Error::new(ErrorKind::Other, error.to_string()))?;
-    }
-
-    fs::copy(source_path, output_path.clone())
-      .map_err(|error| Error::new(ErrorKind::Other, error.to_string()))?;
-    output_files.push(output_path.to_str().unwrap().to_string());
-  }
-
-  Ok(Some(output_files))
-}
-
-fn list(job: &Job) -> Result<Option<Vec<String>>, Error> {
-  let source_paths = job.get_array_of_strings_parameter("source_paths");
-  if source_paths.is_none() {
-    return Err(Error::new(
-      ErrorKind::Other,
-      "Missing source paths parameter.",
-    ));
-  }
-
-  let mut listing = vec![];
-
-  for source_path in &source_paths.unwrap() {
-    info!("List {}", source_path);
-    let path = Path::new(&source_path);
-    if !path.is_dir() {
-      warn!("{} is not a directory", source_path);
-      continue;
-    }
-    let entries = fs::read_dir(path)?
-      .map(|res| {
-        res.map(|entry| {
-          entry
-            .path()
-            .to_str()
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| "".to_string())
-        })
-      })
-      .collect::<Result<Vec<_>, Error>>()?;
-
-    listing.extend(entries);
-  }
-
-  Ok(Some(listing))
-}
-
 #[cfg(test)]
 mod tests {
-  use super::*;
+  use mcai_worker_sdk::job::Job;
   use std::fs::File;
   use std::io::Write;
+  use std::path::Path;
+
+  use super::*;
 
   #[test]
   fn remove_test_ok() {
@@ -196,7 +94,8 @@ mod tests {
 
     let job = Job::new(message).unwrap();
     let job_result = JobResult::new(job.job_id);
-    let result = process(None, &job, job_result);
+    let parameters: FileSystemParameters = job.get_parameters().unwrap();
+    let result = process(None, parameters, job_result);
 
     assert!(result.is_ok());
     assert!(!path1.exists(), format!("{:?} still exists", path1));
@@ -237,7 +136,8 @@ mod tests {
 
     let job = Job::new(message).unwrap();
     let job_result = JobResult::new(job.job_id);
-    let result = process(None, &job, job_result);
+    let parameters: FileSystemParameters = job.get_parameters().unwrap();
+    let result = process(None, parameters, job_result);
 
     let job_result = JobResult::new(124)
       .with_status(JobStatus::Error)
@@ -245,6 +145,95 @@ mod tests {
 
     assert_eq!(result, Err(MessageError::ProcessingError(job_result)));
     assert!(!path1.exists(), format!("{:?} still exists", path1));
+  }
+
+  #[test]
+  fn copy_test_ok() {
+    let path1 = Path::new("/tmp/file_5.tmp");
+    let mut file1 = File::create(path1).unwrap();
+    file1.write_all(b"ABCDEF1234567890").unwrap();
+    assert!(path1.exists());
+
+    let path2 = Path::new("/tmp/file_6.tmp");
+    let mut file2 = File::create(path2).unwrap();
+    file2.write_all(b"ABCDEF1234567890").unwrap();
+    assert!(path2.exists());
+
+    let message = r#"{
+      "parameters": [
+        {
+          "id": "source_paths",
+          "type": "array_of_strings",
+          "value": [
+            "/tmp/file_5.tmp",
+            "/tmp/file_6.tmp"
+          ]
+        },
+        {
+          "id": "action",
+          "type": "string",
+          "value": "copy"
+        },
+        {
+          "id": "output_directory",
+          "type": "array_of_strings",
+          "value": "./examples"
+        }
+      ],
+      "job_id": 123
+    }"#;
+
+    let job = Job::new(message).unwrap();
+    let job_result = JobResult::new(job.job_id);
+    let parameters: FileSystemParameters = job.get_parameters().unwrap();
+    let result = process(None, parameters, job_result);
+
+    let copied_path_1 = Path::new("./examples/file_5.tmp");
+    let copied_path_2 = Path::new("./examples/file_6.tmp");
+
+    assert!(result.is_ok());
+    assert!(copied_path_1.exists(), format!("{:?} copy failed", copied_path_1));
+    assert!(copied_path_2.exists(), format!("{:?} copy failed", copied_path_2));
+
+    std::fs::remove_file(copied_path_1).unwrap();
+    std::fs::remove_file(copied_path_2).unwrap();
+  }
+
+  #[test]
+  fn copy_test_error() {
+    let path1 = Path::new("/tmp/file_3.tmp");
+    let mut file1 = File::create(path1).unwrap();
+    file1.write_all(b"ABCDEF1234567890").unwrap();
+    assert!(path1.exists());
+
+    let message = r#"{
+      "parameters": [
+        {
+          "id": "source_paths",
+          "type": "array_of_strings",
+          "value": [
+            "/tmp/file_3.tmp"
+          ]
+        },
+        {
+          "id": "action",
+          "type": "string",
+          "value": "copy"
+        }
+      ],
+      "job_id": 124
+    }"#;
+
+    let job = Job::new(message).unwrap();
+    let job_result = JobResult::new(job.job_id);
+    let parameters: FileSystemParameters = job.get_parameters().unwrap();
+    let result = process(None, parameters, job_result);
+
+    let job_result = JobResult::new(124)
+      .with_status(JobStatus::Error)
+      .with_message("IO Error: Could not copy files without output directory.");
+
+    assert_eq!(result, Err(MessageError::ProcessingError(job_result)));
   }
 
   #[test]
@@ -269,10 +258,10 @@ mod tests {
 
     let job = Job::new(message).unwrap();
     let job_result = JobResult::new(job.job_id);
-    let result = process(None, &job, job_result);
+    let parameters: FileSystemParameters = job.get_parameters().unwrap();
+    let result = process(None, parameters, job_result);
 
     assert!(result.is_ok());
-    println!("{:?}", result);
     let job_result = result.unwrap();
     assert!(job_result
       .get_destination_paths()
@@ -298,14 +287,16 @@ mod tests {
     }"#;
 
     let job = Job::new(message).unwrap();
-    let job_result = JobResult::new(job.job_id);
-    let result = process(None, &job, job_result);
+    let error = job.get_parameters::<FileSystemParameters>().unwrap_err();
+    let expected_error = MessageError::ParameterValueError(
+      "Cannot get parameters from Object({\
+        \"requirements\": Object({\"paths\": Array([])}), \
+        \"source_paths\": Array([String(\"/tmp/file_x.tmp\")])}): \
+        Error(\"missing field `action`\", line: 0, column: 0)"
+        .to_string(),
+    );
 
-    let job_result = JobResult::new(0)
-      .with_status(JobStatus::Error)
-      .with_message("IO Error: Unknown action named Undefined");
-
-    assert_eq!(result, Err(MessageError::ProcessingError(job_result)));
+    assert_eq!(error, expected_error);
 
     message = r#"{
       "parameters": [
@@ -329,13 +320,15 @@ mod tests {
     }"#;
 
     let job = Job::new(message).unwrap();
-    let job_result = JobResult::new(job.job_id);
-    let result = process(None, &job, job_result);
+    let error = job.get_parameters::<FileSystemParameters>().unwrap_err();
+    let expected_error = MessageError::ParameterValueError(
+      "Cannot get parameters from Object({\
+        \"action\": String(\"bad_action\"), \
+        \"requirements\": Object({\"paths\": Array([])}), \"source_paths\": Array([String(\"/tmp/file_x.tmp\")])}): \
+        Error(\"unknown variant `bad_action`, expected one of `copy`, `list`, `remove`\", line: 0, column: 0)"
+        .to_string()
+    );
 
-    let job_result = JobResult::new(0)
-      .with_status(JobStatus::Error)
-      .with_message("IO Error: Unknown action named bad_action");
-
-    assert_eq!(result, Err(MessageError::ProcessingError(job_result)));
+    assert_eq!(error, expected_error);
   }
 }
