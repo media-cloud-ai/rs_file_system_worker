@@ -335,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "file_system_worker"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "built",
  "mcai_worker_sdk",
