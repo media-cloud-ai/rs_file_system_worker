@@ -192,8 +192,14 @@ mod tests {
     let copied_path_2 = Path::new("./examples/file_6.tmp");
 
     assert!(result.is_ok());
-    assert!(copied_path_1.exists(), format!("{:?} copy failed", copied_path_1));
-    assert!(copied_path_2.exists(), format!("{:?} copy failed", copied_path_2));
+    assert!(
+      copied_path_1.exists(),
+      format!("{:?} copy failed", copied_path_1)
+    );
+    assert!(
+      copied_path_2.exists(),
+      format!("{:?} copy failed", copied_path_2)
+    );
 
     std::fs::remove_file(copied_path_1).unwrap();
     std::fs::remove_file(copied_path_2).unwrap();
